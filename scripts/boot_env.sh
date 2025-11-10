@@ -53,6 +53,17 @@ EOF
 echo ""
 
 # ======================================
+# 📓 Inicia JupyterLab em background
+# ======================================
+echo "📓 Iniciando JupyterLab na porta 8888..."
+jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root \
+  --ServerApp.token='' \
+  --ServerApp.password='' \
+  --ServerApp.allow_origin='*' \
+  --ServerApp.allow_remote_access=True \
+  --ServerApp.root_dir='/workspace' &
+
+# ======================================
 # 🚀 Inicialização da API FastAPI
 # ======================================
 cd /workspace/app
