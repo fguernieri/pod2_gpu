@@ -28,6 +28,6 @@ jobs:
         with:
           context: .                # garante que copia tudo da raiz do repo
           push: true                # envia pro Docker Hub
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/pod2:latest
-          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/pod2:cache
-          cache-to: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/pod2:cache,mode=max
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/pod2_gpu:latest
+          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/pod2_gpu:cache
+          cache-to: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/pod2_gpu:cache,mode=max
