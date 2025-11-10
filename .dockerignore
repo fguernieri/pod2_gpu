@@ -1,0 +1,16 @@
+__pycache__/
+.ipynb_checkpoints/
+.cache/
+logs/
+uploads/
+output/
+snapshots/
+venv/
+*.mp4
+*.mp3
+*.ass
+*.json
+*.zip
+*.tar
+*.gz
+*.log
