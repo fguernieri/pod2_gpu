@@ -1,0 +1,24 @@
+# --- Core FastAPI ---
+fastapi
+uvicorn
+aiofiles
+python-multipart          # ✅ necessário para UploadFile / Form / File
+
+# --- Processamento de vídeo e áudio ---
+moviepy==1.0.3            # ✅ versão estável com suporte a 'editor'
+ffmpeg-python
+imageio[ffmpeg]
+soundfile
+opencv-python
+
+# --- IA e transcrição ---
+openai-whisper
+torch
+torchaudio
+torchvision
+numpy
+tqdm
+
+# --- Utilidades ---
+requests
+python-dotenv
