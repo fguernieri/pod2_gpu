@@ -21,4 +21,5 @@ tqdm
 
 # --- Utilidades ---
 requests
+jupyterlab
 python-dotenv
