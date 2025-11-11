@@ -1,34 +1,29 @@
-# === Core FastAPI ===
+# --- Core FastAPI ---
 fastapi==0.115.0
 uvicorn[standard]==0.30.1
 aiofiles==24.1.0
 python-multipart==0.0.9
 
-# === Processamento de Vídeo e Áudio ===
+# --- Processamento de vídeo e áudio ---
 moviepy==1.0.3
 ffmpeg-python==0.2.0
 imageio[ffmpeg]==2.35.1
 soundfile==0.12.1
+opencv-python-headless==4.9.0.80
 
-# === OpenCV ===
-# Se GPU disponível, instala automaticamente a versão CUDA.
-opencv-contrib-python==4.9.0.80
+# --- IA e transcrição (CPU safe) ---
+torch==2.2.2
+torchaudio==2.2.2
+torchvision==0.17.2
+# openai-whisper opcional
 
-# === IA e Transcrição ===
-torch==2.2.2+cu121; platform_system != "Windows"
-torchaudio==2.2.2+cu121; platform_system != "Windows"
-torchvision==0.17.2+cu121; platform_system != "Windows"
-# openai-whisper opcional: pip install git+https://github.com/openai/whisper.git
-
-# === Subtítulos ===
+# --- Subtítulos ---
 pysubs2==1.6.1
 
-# === NumPy e Utilidades ===
+# --- Utilidades ---
 numpy==1.26.4
 tqdm==4.66.5
 requests==2.32.3
 python-dotenv==1.0.1
 typing-extensions==4.12.2
-
-# === Ambiente opcional ===
 jupyterlab==4.2.5
