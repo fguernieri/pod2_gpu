@@ -1,5 +1,5 @@
 # ==========================================
-# 🧩 BASE CUDA + CUDNN (para Whisper e Torch)
+# 🧩 BASE CUDA + CUDNN (para Whisper, Torch e OpenCV CUDA)
 # ==========================================
 FROM nvidia/cuda:13.0.2-cudnn-runtime-ubuntu22.04
 
@@ -12,13 +12,17 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_ROOT_USER_ACTION=ignore \
     PIP_BREAK_SYSTEM_PACKAGES=1 \
     PYTHONHOME="/usr" \
-    PYTHONPATH="/usr/local/lib/python3.10/dist-packages:/app/app:/app"
+    PYTHONPATH="/usr/local/lib/python3.10/dist-packages:/app/app:/app" \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
 
 # ==========================================
 # 🔧 DEPENDÊNCIAS DO SISTEMA
 # ==========================================
 RUN apt update && apt install -y \
-    python3 python3-pip ffmpeg git curl wget rsync nano \
+    python3 python3-pip git curl wget rsync nano \
+    ffmpeg libsm6 libxext6 libgl1 \
+    fonts-dejavu-core fonts-freefont-ttf \
     && rm -rf /var/lib/apt/lists/*
 
 # ==========================================
@@ -30,7 +34,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt && \
-    python3 -c "import fastapi, uvicorn, moviepy.editor, torch, whisper; print('✅ Dependências principais OK')"
+    python3 -c "import fastapi, uvicorn, cv2, torch; print('✅ Dependências principais OK')"
 
 # Copia código-fonte e scripts
 COPY app ./app
