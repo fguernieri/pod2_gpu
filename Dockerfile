@@ -22,16 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # =========================================================
 COPY requirements.txt /workspace/
 RUN pip install --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r /workspace/requirements.txt && \
-    python3 - <<'EOF'
-import importlib
-for lib in ["fastapi", "uvicorn", "cv2"]:
-    try:
-        importlib.import_module(lib)
-        print(f"✅ {lib} OK")
-    except Exception as e:
-        print(f"⚠️ Falha ao importar {lib}: {e}")
-EOF
+    pip install --no-cache-dir -r /workspace/requirements.txt
 
 # =========================================================
 # 📁 CÓDIGO DA APLICAÇÃO
