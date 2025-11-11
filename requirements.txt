@@ -1,25 +1,27 @@
 # --- Core FastAPI ---
 fastapi
 uvicorn
-aiofiles
-python-multipart          # ✅ necessário para UploadFile / Form / File
+# aiofiles
+# python-multipart          # ✅ necessário para UploadFile / Form / File
 
 # --- Processamento de vídeo e áudio ---
-moviepy==1.0.3            # ✅ versão estável com suporte a 'editor'
-ffmpeg-python
-imageio[ffmpeg]
+# moviepy==1.0.3            # ✅ versão estável com suporte a 'editor'
+# ffmpeg-python
+# imageio[ffmpeg]
 soundfile
-opencv-python
+# Substitui 'opencv-python' (CPU) pela versão CUDA (GPU)
+# ⚠️ Compatível com Python 3.7–3.12 e CUDA 13.0
+https://github.com/cudawarped/opencv-python-cuda-wheels/releases/download/4.13.0.20250811/opencv_contrib_python_rolling-4.13.0.20250811-cp37-abi3-linux_x86_64.whl
 
 # --- IA e transcrição ---
-openai-whisper
-torch
-torchaudio
-torchvision
-numpy
-tqdm
+# openai-whisper
+# torch
+# torchaudio
+# torchvision
+numpy==1.26.4             # ✅ compatível com OpenCV 4.13.0 CUDA
+# tqdm
 
 # --- Utilidades ---
 requests
 jupyterlab
-python-dotenv
+# python-dotenv
