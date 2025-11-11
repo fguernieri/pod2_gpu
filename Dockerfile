@@ -34,7 +34,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt && \
-    python3 -c "import fastapi, uvicorn, cv2, print('✅ Dependências principais OK')"
+    python3 -c "import fastapi, uvicorn, cv2; print('✅ Dependências principais OK')"
 
 # Copia código-fonte e scripts
 COPY app ./app
