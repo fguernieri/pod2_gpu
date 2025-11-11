@@ -1,28 +1,34 @@
-# --- Core FastAPI ---
-fastapi
-uvicorn
-# aiofiles
-# python-multipart          # ✅ necessário para UploadFile / Form / File
+# === Core FastAPI ===
+fastapi==0.115.0
+uvicorn[standard]==0.30.1
+aiofiles==24.1.0
+python-multipart==0.0.9
 
-# --- Processamento de vídeo e áudio ---
-# moviepy==1.0.3            # ✅ versão estável com suporte a 'editor'
-ffmpeg-python
-# imageio[ffmpeg]
-soundfile
-# Substitui 'opencv-python' (CPU) pela versão CUDA (GPU)
-# ⚠️ Compatível com Python 3.7–3.12 e CUDA 13.0
-https://github.com/cudawarped/opencv-python-cuda-wheels/releases/download/4.13.0.20250811/opencv_contrib_python_rolling-4.13.0.20250811-cp37-abi3-linux_x86_64.whl
+# === Processamento de Vídeo e Áudio ===
+moviepy==1.0.3
+ffmpeg-python==0.2.0
+imageio[ffmpeg]==2.35.1
+soundfile==0.12.1
 
-# --- IA e transcrição ---
-# openai-whisper
-# torch
-# torchaudio
-# torchvision
-pysubs2                   
-numpy==1.26.4             # ✅ compatível com OpenCV 4.13.0 CUDA
-# tqdm
+# === OpenCV ===
+# Se GPU disponível, instala automaticamente a versão CUDA.
+opencv-contrib-python==4.9.0.80
 
-# --- Utilidades ---
-requests
-jupyterlab
-# python-dotenv
+# === IA e Transcrição ===
+torch==2.2.2+cu121; platform_system != "Windows"
+torchaudio==2.2.2+cu121; platform_system != "Windows"
+torchvision==0.17.2+cu121; platform_system != "Windows"
+# openai-whisper opcional: pip install git+https://github.com/openai/whisper.git
+
+# === Subtítulos ===
+pysubs2==1.6.1
+
+# === NumPy e Utilidades ===
+numpy==1.26.4
+tqdm==4.66.5
+requests==2.32.3
+python-dotenv==1.0.1
+typing-extensions==4.12.2
+
+# === Ambiente opcional ===
+jupyterlab==4.2.5
