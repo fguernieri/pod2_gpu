@@ -1,71 +1,183 @@
-# /workspace/app/main.py
-
-import os, glob
-import numpy as np
-import cv2
 from fastapi import FastAPI, Query
-from fastapi.responses import JSONResponse
+import subprocess, json, os, glob, random, cv2, numpy as np, soundfile as sf, pysubs2
 
-# Inicializa a API
-app = FastAPI(title="Ken Burns GPU API", version="1.0")
+app = FastAPI(title="🎬 Video & Karaoke API", version="2.0")
 
-# === Função principal ===
-def generate_video(pattern: str, out: str, fps: int, zoom: float, frames_per_image: int):
-    # Busca arquivos
-    files = sorted(glob.glob(pattern))
+# ======================================================
+# 🧩 Funções auxiliares
+# ======================================================
+def get_audio_duration(audio_path):
+    data, samplerate = sf.read(audio_path)
+    return len(data) / samplerate
+
+def write_frame(video, gpu_frame):
+    if gpu_frame is None:
+        return
+    frame_cpu = gpu_frame.download()
+    if frame_cpu is None:
+        return
+    if len(frame_cpu.shape) == 2:
+        frame_cpu = cv2.cvtColor(frame_cpu, cv2.COLOR_GRAY2BGR)
+    video.write(frame_cpu)
+
+def kenburns_zoom_in(gpu_img, frames, w, h, zoom_factor):
+    for i in range(frames):
+        s = 1.0 + (zoom_factor - 1.0) * (i / (frames - 1))
+        dx, dy = w/2 - (w/2)*s, h/2 - (h/2)*s
+        M = np.array([[s, 0, dx], [0, s, dy]], np.float32)
+        yield cv2.cuda.warpAffine(gpu_img, M, (w, h))
+
+def crossfade_transition(gpu_a, gpu_b, frames):
+    for i in range(frames):
+        alpha = i / frames
+        yield cv2.cuda.addWeighted(gpu_a, 1 - alpha, gpu_b, alpha, 0)
+
+def sync_legenda_with_audio(subtitle_input, audio_input, subtitle_output):
+    """Sincroniza a legenda .ass com a duração real do áudio"""
+    cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", audio_input]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    duration_audio = float(json.loads(result.stdout)["format"]["duration"])
+    subs = pysubs2.load(subtitle_input, encoding="utf-8")
+
+    end_times = [ev.end for ev in subs.events if ev.end > 0]
+    if not end_times:
+        raise ValueError("❌ Nenhum evento válido na legenda.")
+    duration_legenda = max(end_times) / 1000.0
+    diff = duration_audio - duration_legenda
+    drift_percent = (diff / duration_audio) * 100
+
+    print(f"🎧 Áudio: {duration_audio:.2f}s | 💬 Legenda: {duration_legenda:.2f}s | Δ {diff:+.2f}s ({drift_percent:+.2f}%)")
+
+    if abs(diff) > 0.2:
+        scale = duration_audio / duration_legenda
+        for ev in subs.events:
+            ev.start = int(ev.start * scale)
+            ev.end = int(ev.end * scale)
+        print(f"✅ Corrigido drift proporcional ({scale:.4f}x).")
+
+    first_sub = min(ev.start for ev in subs.events)
+    if first_sub > 500:
+        offset = -first_sub + 200
+        subs.shift(s=offset / 1000)
+        print(f"🔧 Offset inicial ajustado em {offset/1000:.2f}s.")
+
+    subs.save(subtitle_output)
+    return subtitle_output
+
+# ======================================================
+# 🎥 Endpoint 1: Gerar vídeo base
+# ======================================================
+@app.post("/gera-video")
+def gera_video(
+    audio_name: str = Query(...),
+    image_pattern: str = Query("VID*.png"),
+    output_name: str = Query("out.avi"),
+    fps: int = Query(30),
+    zoom_factor: float = Query(1.05),
+):
+    uploads = "/workspace/uploads"
+    output = "/workspace/output"
+    os.makedirs(output, exist_ok=True)
+    audio_path = os.path.join(uploads, audio_name)
+    files = sorted(glob.glob(os.path.join(uploads, image_pattern)))
+
+    if not os.path.exists(audio_path):
+        return {"erro": f"Áudio não encontrado: {audio_path}"}
     if not files:
-        raise ValueError("Nenhuma imagem encontrada com o padrão informado.")
+        return {"erro": f"Nenhuma imagem encontrada com padrão {image_pattern}"}
 
+    audio_duration = get_audio_duration(audio_path)
     img0 = cv2.imread(files[0])
     h, w = img0.shape[:2]
-    video = cv2.VideoWriter(out, cv2.VideoWriter_fourcc(*'MJPG'), fps, (w, h))
+    video_path = os.path.join(output, output_name)
+    video = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*'MJPG'), fps, (w, h))
 
-    def zoom_frames(gpu_img, frames=60, start_zoom=1.0, end_zoom=1.1):
-        """Gera frames com zoom progressivo de start_zoom → end_zoom."""
-        for i in range(frames):
-            s = start_zoom + (end_zoom - start_zoom) * (i / (frames - 1))
-            dx, dy = w/2 - (w/2)*s, h/2 - (h/2)*s
-            M = np.array([[s, 0, dx],
-                          [0, s, dy]], np.float32)
-            gpu_dst = cv2.cuda.warpAffine(gpu_img, M, (w, h))
-            yield gpu_dst
+    frames_total = int(fps * audio_duration)
+    frames_por_img = frames_total // len(files)
+    transition_frames = int(frames_por_img * 0.2)
+    frames_por_img = int(frames_por_img * 0.8)
 
-    # Carrega imagens na GPU
     gpu_images = []
     for f in files:
         img = cv2.imread(f)
-        gpu_mat = cv2.cuda_GpuMat()
-        gpu_mat.upload(img)
-        gpu_images.append(gpu_mat)
+        g = cv2.cuda_GpuMat()
+        g.upload(img)
+        gpu_images.append(g)
 
-    # Gera frames de cada imagem
-    for gpu_img in gpu_images:
-        for frame in zoom_frames(gpu_img, frames_per_image, start_zoom=1.0, end_zoom=zoom):
-            video.write(frame.download())
+    for i, gpu_img in enumerate(gpu_images):
+        for frame in kenburns_zoom_in(gpu_img, frames_por_img, w, h, zoom_factor):
+            write_frame(video, frame)
+        if i + 1 < len(gpu_images):
+            for f in crossfade_transition(gpu_img, gpu_images[i+1], transition_frames):
+                write_frame(video, f)
 
     video.release()
+    return {"status": "✅ Vídeo base gerado", "path": video_path, "duração": round(audio_duration, 2)}
 
-
-# === ENDPOINT HTTP ===
-@app.post("/render")
-def render_video(
-    pattern: str = Query("uploads/*.png", description="Padrão de arquivos (glob)"),
-    out: str = Query("output/out.avi", description="Caminho do vídeo de saída"),
-    fps: int = Query(30, description="Frames por segundo"),
-    zoom: float = Query(1.05, description="Fator final de zoom (ex: 1.1 = +10%)"),
-    frames_per_image: int = Query(150, description="Duração de cada imagem em frames")
+# ======================================================
+# 🔀 Endpoint 2: Merge com áudio e legenda sincronizada
+# ======================================================
+@app.post("/merge-video")
+def merge_video(
+    video_name: str = Query(...),
+    audio_name: str = Query(...),
+    subtitle_name: str = Query(...),
+    output_name: str = Query("final_karaoke.mp4"),
+    preset: str = Query("p5"),
+    bitrate: str = Query("8M"),
+    font_dir: str = Query("/usr/share/fonts")
 ):
-    """
-    Renderiza um vídeo com efeito Ken Burns (zoom suave) usando GPU CUDA.
-    """
-    try:
-        os.makedirs(os.path.dirname(out), exist_ok=True)
-        generate_video(pattern, out, fps, zoom, frames_per_image)
-        return JSONResponse({"status": "ok", "output": out})
-    except Exception as e:
-        return JSONResponse({"status": "error", "message": str(e)})
+    uploads = "/workspace/uploads"
+    output = "/workspace/output"
+    os.makedirs(output, exist_ok=True)
+    video_input = os.path.join(output, video_name)
+    audio_input = os.path.join(uploads, audio_name)
+    subtitle_input = os.path.join(uploads, subtitle_name)
+    subtitle_sync = os.path.join(uploads, "legenda_sync.ass")
+    output_file = os.path.join(output, output_name)
 
+    if not os.path.exists(video_input) or not os.path.exists(audio_input):
+        return {"erro": "❌ Arquivo de vídeo ou áudio não encontrado"}
 
-@app.get("/")
-def root():
-    return {"message": "Ken Burns GPU API ativa 🚀. Use POST /render para gerar vídeos."}
+    # 🔄 Sincroniza a legenda
+    sync_legenda_with_audio(subtitle_input, audio_input, subtitle_sync)
+
+    # 🎬 FFmpeg NVENC
+    cmd = [
+        "ffprobe", "-v", "error", "-show_entries", "format=duration",
+        "-of", "json", audio_input
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    duration_audio = float(json.loads(result.stdout)["format"]["duration"])
+
+    subtitle_path = subtitle_sync.replace(":", "\\:")
+    filter_complex = (
+        f"[0:v]format=yuv420p,"
+        f"tpad=stop_mode=clone:stop_duration={duration_audio},"
+        f"ass={subtitle_path}:fontsdir={font_dir}[v]"
+    )
+
+    cmd_merge = [
+        "ffmpeg", "-hide_banner", "-v", "warning", "-stats", "-y",
+        "-i", video_input, "-i", audio_input,
+        "-filter_complex", filter_complex,
+        "-map", "[v]", "-map", "1:a",
+        "-c:v", "h264_nvenc",
+        "-preset", preset,
+        "-b:v", bitrate,
+        "-maxrate", bitrate,
+        "-bufsize", "20M",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-to", str(duration_audio),
+        "-movflags", "+faststart",
+        output_file
+    ]
+
+    print("🎬 Gerando vídeo final com GPU NVENC...")
+    result = subprocess.run(cmd_merge, text=True, capture_output=True)
+
+    if result.returncode == 0:
+        return {"status": "✅ Merge completo", "output": output_file, "duration": duration_audio}
+    else:
+        return {"erro": result.stderr}
