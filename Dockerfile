@@ -73,4 +73,4 @@ VOLUME ["/workspace"]
 # ==========================================
 # 🚀 COMANDO PADRÃO
 # ==========================================
-CMD ["/bin/bash", "/usr/local/bin/boot_env.sh", "/app/scripts/boot_env.sh"]
+CMD ["/usr/local/bin/boot_env.sh", "/app/scripts/boot_env.sh"]
