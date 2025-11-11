@@ -1,55 +1,52 @@
-# ==========================================
-# 🧩 BASE CUDA + CUDNN (para Whisper, Torch e OpenCV CUDA)
-# ==========================================
+# =========================================================
+# 🧱 BASE CUDA: imagem oficial NVIDIA com suporte a GPU
+# =========================================================
 FROM nvidia/cuda:13.0.2-cudnn-runtime-ubuntu22.04
 
-# ==========================================
-# ⚙️ VARIÁVEIS DE AMBIENTE ESSENCIAIS
-# ==========================================
-ENV DEBIAN_FRONTEND=noninteractive \
-    TZ=Etc/UTC \
-    PYTHONUNBUFFERED=1 \
-    PIP_ROOT_USER_ACTION=ignore \
-    PIP_BREAK_SYSTEM_PACKAGES=1 \
-    PYTHONHOME="/usr" \
-    PYTHONPATH="/usr/local/lib/python3.10/dist-packages:/app/app:/app" \
-    NVIDIA_VISIBLE_DEVICES=all \
-    NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+ENV DEBIAN_FRONTEND=noninteractive
+WORKDIR /workspace
 
-# ==========================================
-# 🔧 DEPENDÊNCIAS DO SISTEMA
-# ==========================================
-RUN apt update && apt install -y \
-    python3 python3-pip git curl wget rsync nano \
-    ffmpeg libsm6 libxext6 libgl1 \
+# =========================================================
+# ⚙️ DEPENDÊNCIAS DE SISTEMA
+# =========================================================
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-dev \
+    ffmpeg \
+    git curl \
+    libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 \
     fonts-dejavu-core fonts-freefont-ttf \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# ==========================================
-# 📁 ESTRUTURA DO APP
-# ==========================================
-WORKDIR /app
-
-# Copia e instala dependências Python
-COPY requirements.txt .
+# =========================================================
+# 📦 DEPENDÊNCIAS PYTHON
+# =========================================================
+COPY requirements.txt /workspace/
 RUN pip install --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements.txt && \
-    python3 -c "import fastapi, uvicorn, cv2; print('✅ Dependências principais OK')"
+    pip install --no-cache-dir -r /workspace/requirements.txt && \
+    python3 - <<'EOF'
+import importlib
+for lib in ["fastapi", "uvicorn", "cv2"]:
+    try:
+        importlib.import_module(lib)
+        print(f"✅ {lib} OK")
+    except Exception as e:
+        print(f"⚠️ Falha ao importar {lib}: {e}")
+EOF
 
-# Copia código-fonte e scripts
-COPY app ./app
-COPY models ./models
-COPY scripts ./scripts
+# =========================================================
+# 📁 CÓDIGO DA APLICAÇÃO
+# =========================================================
+COPY . /workspace/
+RUN chmod +x /workspace/boot_env.sh
 
-# Garante permissão de execução para scripts
-RUN chmod +x /app/scripts/*.sh
+# =========================================================
+# 🌎 VARIÁVEIS DE AMBIENTE CUDA
+# =========================================================
+ENV PYTHONUNBUFFERED=1
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
 
-# ==========================================
-# 📦 CONFIGURAÇÃO DE VOLUME PERSISTENTE
-# ==========================================
-VOLUME ["/workspace"]
-
-# ==========================================
-# 🚀 COMANDO PADRÃO
-# ==========================================
-CMD ["bash", "-c", "${START_CMD:-/app/scripts/boot_env.sh}"]
+# =========================================================
+# 🚀 ENTRYPOINT
+# =========================================================
+ENTRYPOINT ["/workspace/boot_env.sh"]
