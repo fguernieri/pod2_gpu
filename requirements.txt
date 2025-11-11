@@ -8,7 +8,7 @@ uvicorn
 # moviepy==1.0.3            # ✅ versão estável com suporte a 'editor'
 # ffmpeg-python
 # imageio[ffmpeg]
-# soundfile
+soundfile
 # Substitui 'opencv-python' (CPU) pela versão CUDA (GPU)
 # ⚠️ Compatível com Python 3.7–3.12 e CUDA 13.0
 https://github.com/cudawarped/opencv-python-cuda-wheels/releases/download/4.13.0.20250811/opencv_contrib_python_rolling-4.13.0.20250811-cp37-abi3-linux_x86_64.whl
