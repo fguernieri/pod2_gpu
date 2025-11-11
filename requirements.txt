@@ -6,7 +6,7 @@ uvicorn
 
 # --- Processamento de vídeo e áudio ---
 # moviepy==1.0.3            # ✅ versão estável com suporte a 'editor'
-# ffmpeg-python
+ffmpeg-python
 # imageio[ffmpeg]
 soundfile
 # Substitui 'opencv-python' (CPU) pela versão CUDA (GPU)
@@ -18,6 +18,7 @@ https://github.com/cudawarped/opencv-python-cuda-wheels/releases/download/4.13.0
 # torch
 # torchaudio
 # torchvision
+pysubs2                   
 numpy==1.26.4             # ✅ compatível com OpenCV 4.13.0 CUDA
 # tqdm
 
