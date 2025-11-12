@@ -1,7 +1,8 @@
 from fastapi import FastAPI, Query, Body, File, UploadFile, Form
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-import subprocess, json, os, glob, random, cv2, numpy as np, soundfile as sf, pysubs2
+import subprocess, json, os, glob, asyncio, time, cv2, numpy as np, soundfile as sf, pysubs2, aiofiles
+from pathlib import Path
 
 app = FastAPI(title="🎬 Video & Karaoke API", version="2.0")
 
@@ -147,6 +148,121 @@ def gera_video(
     return {"status": "✅ Vídeo base gerado", "path": video_path, "duração": round(audio_duration, 2)}
 
 # ======================================================
+# 🎥 Endpoint: Gerar vídeo base - Async
+# ======================================================
+
+@app.post("/gera-video-async")
+async def gera_video_async(
+    audio_name: str = Body(...),
+    image_pattern: str = Body("VID*.png"),
+    output_name: str = Body("out.avi"),
+    fps: int = Body(30),
+    zoom_factor: float = Body(1.05),
+):
+    """
+    Gera vídeo base em background (GPU CUDA + Ken Burns + Crossfade)
+    e salva progresso em JSON para acompanhamento via /status/{output_name}.
+    """
+    uploads = "/workspace/uploads"
+    output = "/workspace/output"
+    os.makedirs(output, exist_ok=True)
+
+    base_name = Path(output_name).stem
+    status_file = os.path.join(output, f"{base_name}_status.json")
+
+    async def salvar_status(etapa, progresso=None, mensagem=None):
+        """Grava status incremental assíncrono"""
+        data = {
+            "etapa": etapa,
+            "progresso": progresso,
+            "mensagem": mensagem,
+            "timestamp": time.time(),
+        }
+        async with aiofiles.open(status_file, "w") as f:
+            await f.write(json.dumps(data, ensure_ascii=False, indent=2))
+
+    # Cria status inicial
+    await salvar_status("inicializando", 0, "Preparando geração de vídeo...")
+
+    async def processar_video():
+        try:
+            audio_path = os.path.join(uploads, audio_name)
+            files = sorted(glob.glob(os.path.join(uploads, image_pattern)))
+
+            if not os.path.exists(audio_path):
+                await salvar_status("erro", 0, f"Áudio não encontrado: {audio_path}")
+                return
+            if not files:
+                await salvar_status("erro", 0, f"Nenhuma imagem encontrada com padrão {image_pattern}")
+                return
+
+            # 🎧 Calcula duração do áudio
+            audio_duration = get_audio_duration(audio_path)
+
+            # 🎞️ Prepara estrutura do vídeo
+            img0 = cv2.imread(files[0])
+            h, w = img0.shape[:2]
+            video_path = os.path.join(output, output_name)
+            video = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*"MJPG"), fps, (w, h))
+
+            frames_total = int(fps * audio_duration)
+            frames_por_img = frames_total // len(files)
+            transition_frames = int(frames_por_img * 0.2)
+            frames_por_img = int(frames_por_img * 0.8)
+
+            # 🔥 Carrega imagens na GPU
+            gpu_images = []
+            for idx, f in enumerate(files):
+                img = cv2.imread(f)
+                if img is None:
+                    await salvar_status("erro", 0, f"Falha ao ler imagem: {f}")
+                    return
+                g = cv2.cuda_GpuMat()
+                g.upload(img)
+                gpu_images.append(g)
+                await salvar_status("carregando", round((idx+1)/len(files)*10, 2), f"Imagem {idx+1}/{len(files)} carregada")
+
+            # 🌀 Processa imagens (Ken Burns + Crossfade)
+            frame_count = 0
+            total_frames = len(gpu_images) * (frames_por_img + transition_frames)
+            await salvar_status("renderizando", 15, "Iniciando composição...")
+
+            for i, gpu_img in enumerate(gpu_images):
+                start_zoom = 1.0
+                if i > 0:
+                    start_zoom = zoom_factor * 0.98  # leve recuo para suavizar
+                # Ken Burns (movimento interno)
+                for frame in kenburns_zoom_in(gpu_img, frames_por_img, w, h, zoom_factor, start_zoom):
+                    write_frame(video, frame)
+                    frame_count += 1
+                    if frame_count % (fps * 2) == 0:
+                        perc = round((frame_count / total_frames) * 100, 2)
+                        await salvar_status("renderizando", perc, f"{perc}% concluído...")
+
+                # Transição crossfade
+                if i + 1 < len(gpu_images):
+                    for f in crossfade_transition_smooth(
+                        gpu_img, gpu_images[i + 1], w, h, zoom_factor, transition_frames
+                    ):
+                        write_frame(video, f)
+                        frame_count += 1
+
+            video.release()
+            await salvar_status("concluido", 100, f"✅ Vídeo base gerado com sucesso ({round(audio_duration,2)}s)")
+        except Exception as e:
+            await salvar_status("erro", 0, f"Exceção: {str(e)}")
+
+    # 🚀 Dispara task assíncrona em background
+    asyncio.create_task(processar_video())
+
+    return {
+        "status": "🟢 render iniciado",
+        "output": os.path.join(output, output_name),
+        "status_file": status_file,
+        "mensagem": "Processamento em background. Consulte /status/{output_name}.",
+    }
+
+# ======================================================
 # 🔀 Endpoint 2: Merge com áudio e legenda sincronizada
 # ======================================================
 @app.post("/merge-video")
@@ -213,7 +329,153 @@ def merge_video(
         return {"status": "✅ Merge completo", "output": output_file, "duration": duration_audio}
     else:
         return {"erro": result.stderr}
-        
+
+# ======================================================
+# 🔀 Endpoint: Merge com áudio e legenda sincronizada - Async
+# ======================================================
+@app.post("/merge-video-async")
+async def merge_video_async(
+    video_name: str = Body(...),
+    audio_name: str = Body(...),
+    subtitle_name: str = Body(...),
+    output_name: str = Body("final_karaoke.mp4"),
+    preset: str = Body("p5"),
+    bitrate: str = Body("8M"),
+    font_dir: str = Body("/usr/share/fonts")
+):
+    """
+    Faz o merge do vídeo + áudio + legenda usando GPU (NVENC),
+    de forma assíncrona e com acompanhamento de progresso via /status/{output_name}.
+    """
+    uploads = "/workspace/uploads"
+    output = "/workspace/output"
+    os.makedirs(output, exist_ok=True)
+
+    # Caminhos principais
+    video_input = os.path.join(output, video_name)
+    audio_input = os.path.join(uploads, audio_name)
+    subtitle_input = os.path.join(uploads, subtitle_name)
+    subtitle_sync = os.path.join(uploads, "legenda_sync.ass")
+    output_file = os.path.join(output, output_name)
+
+    base_name = Path(output_name).stem
+    status_file = os.path.join(output, f"{base_name}_status.json")
+
+    # 🔹 Função auxiliar para salvar status
+    async def salvar_status(etapa, progresso=None, mensagem=None):
+        data = {
+            "etapa": etapa,
+            "progresso": progresso,
+            "mensagem": mensagem,
+            "timestamp": time.time(),
+        }
+        async with aiofiles.open(status_file, "w") as f:
+            await f.write(json.dumps(data, ensure_ascii=False, indent=2))
+
+    # 🔸 Cria status inicial
+    await salvar_status("inicializando", 0, "Preparando merge...")
+
+    # 🚀 Processamento em background
+    async def processar_merge():
+        try:
+            # 🔍 Verifica arquivos
+            if not os.path.exists(video_input) or not os.path.exists(audio_input):
+                await salvar_status("erro", 0, "❌ Arquivo de vídeo ou áudio não encontrado")
+                return
+
+            # 🔄 Sincroniza legenda com áudio
+            sync_legenda_with_audio(subtitle_input, audio_input, subtitle_sync)
+            await salvar_status("legenda sincronizada", 10, "Legenda ajustada ao áudio.")
+
+            # 🎧 Obtém duração do áudio
+            cmd_duration = [
+                "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                "-of", "json", audio_input
+            ]
+            result = subprocess.run(cmd_duration, capture_output=True, text=True)
+            duration_audio = float(json.loads(result.stdout)["format"]["duration"])
+
+            # 🎬 Monta comando FFmpeg (NVENC)
+            subtitle_path = subtitle_sync.replace(":", "\\:")
+            filter_complex = (
+                f"[0:v]format=yuv420p,"
+                f"tpad=stop_mode=clone:stop_duration={duration_audio},"
+                f"ass={subtitle_path}:fontsdir={font_dir}[v]"
+            )
+
+            cmd_merge = [
+                "ffmpeg", "-hide_banner", "-v", "info", "-stats", "-y",
+                "-i", video_input, "-i", audio_input,
+                "-filter_complex", filter_complex,
+                "-map", "[v]", "-map", "1:a",
+                "-c:v", "h264_nvenc",
+                "-preset", preset,
+                "-b:v", bitrate,
+                "-maxrate", bitrate,
+                "-bufsize", "20M",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-to", str(duration_audio),
+                "-movflags", "+faststart",
+                output_file
+            ]
+
+            # 🔄 Executa FFmpeg em background e monitora progresso
+            process = subprocess.Popen(
+                cmd_merge,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1
+            )
+
+            total_time = 0.0
+            last_update = time.time()
+
+            while True:
+                line = process.stdout.readline()
+                if not line:
+                    break
+
+                # Atualiza status baseado na saída do FFmpeg
+                if "frame=" in line or "time=" in line:
+                    if "time=" in line:
+                        try:
+                            tempo_str = line.split("time=")[-1].split(" ")[0].strip()
+                            h, m, s = tempo_str.split(":")
+                            total_time = int(h) * 3600 + int(m) * 60 + float(s)
+                            progresso = round(total_time / duration_audio * 100, 2)
+                            await salvar_status("renderizando", progresso, f"🌀 {progresso}% ({tempo_str})")
+                        except Exception:
+                            pass
+
+                # Atualiza status periódico (a cada 5s mesmo sem logs)
+                if time.time() - last_update > 5:
+                    await salvar_status("renderizando", None, "Render ativo...")
+                    last_update = time.time()
+
+            process.wait()
+
+            # ✅ Finalização
+            if process.returncode == 0:
+                await salvar_status("concluido", 100, f"✅ Merge completo ({round(duration_audio,2)}s)")
+            else:
+                await salvar_status("erro", 0, f"⚠️ FFmpeg retornou código {process.returncode}")
+
+        except Exception as e:
+            await salvar_status("erro", 0, f"Exceção: {str(e)}")
+
+    # ⚙️ Dispara a task assíncrona
+    asyncio.create_task(processar_merge())
+
+    # 🔁 Resposta imediata ao cliente
+    return {
+        "status": "🟢 merge iniciado",
+        "output": output_file,
+        "status_file": status_file,
+        "mensagem": "Processamento em background. Consulte /status/{output_name}."
+    }
+
 
 # ========================
 # 📤 ENDPOINT: /upload
@@ -299,6 +561,64 @@ async def baixar_arquivo(filename: str):
 
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+# ======================================================
+# 📊 ENDPOINT: STATUS (CONSULTA DE PROGRESSO)
+# ======================================================
+@app.get("/status/{output_name}")
+async def verificar_status_video(output_name: str):
+    """
+    Consulta o status de um job assíncrono (gera-video ou merge-video).
+    Retorna o conteúdo do _status.json correspondente, ou fallback baseado no arquivo final.
+    """
+    base_name = Path(output_name).stem.replace("_status", "")
+    status_file = os.path.join(OUTPUT_DIR, f"{base_name}_status.json")
+
+    # Detecta o arquivo final (mp4, avi, mov, etc.)
+    video_path = None
+    for ext in [".mp4", ".avi", ".mov"]:
+        candidate = os.path.join(OUTPUT_DIR, base_name + ext)
+        if os.path.exists(candidate):
+            video_path = candidate
+            break
+
+    # 🔹 Caso ainda não tenha iniciado
+    if not os.path.exists(status_file):
+        if not video_path:
+            return {
+                "status": "⏳ aguardando início",
+                "arquivo": f"{base_name}.mp4",
+                "timestamp": time.time()
+            }
+        else:
+            return {
+                "status": "✅ concluído (sem JSON)",
+                "arquivo": os.path.basename(video_path),
+                "tamanho_mb": round(os.path.getsize(video_path) / (1024 * 1024), 2),
+                "timestamp": time.time()
+            }
+
+    # 🔹 Tenta ler o JSON de status
+    try:
+        async with aiofiles.open(status_file, "r") as f:
+            data = json.loads(await f.read())
+    except Exception as e:
+        return {
+            "status": "⚠️ erro leitura JSON",
+            "mensagem": str(e),
+            "arquivo": f"{base_name}.mp4",
+            "timestamp": time.time()
+        }
+
+    # 🔹 Acrescenta metadados úteis
+    data["arquivo"] = os.path.basename(video_path) if video_path else f"{base_name}.mp4"
+    if video_path and os.path.exists(video_path):
+        data["tamanho_mb"] = round(os.path.getsize(video_path) / (1024 * 1024), 2)
+    data["timestamp_resposta"] = time.time()
+
+    return data
+
+
         
 # ======================
 # ❤️ HEALTHCHECK
