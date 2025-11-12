@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Query, Body, File, UploadFile, Form
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 import subprocess, json, os, glob, random, cv2, numpy as np, soundfile as sf, pysubs2
 
@@ -213,25 +213,29 @@ def merge_video(
         return {"status": "✅ Merge completo", "output": output_file, "duration": duration_audio}
     else:
         return {"erro": result.stderr}
+        
 
-# ======================== 
-# 📤 ENDPOINT: /upload 
 # ========================
-
+# 📤 ENDPOINT: /upload
+# ========================
 @app.post("/upload")
 async def upload_file(
     file: UploadFile = File(...),
     filename: str = Form(...)
 ):
     """
-    Salva um arquivo em /workspace/uploads/ com o nome especificado pelo usuário
+    Salva um arquivo em /workspace/uploads/ com o nome especificado pelo usuário.
+    Exemplo de uso (curl):
+    curl -X POST "http://localhost:8000/upload" \
+         -F "file=@/caminho/arquivo.txt" \
+         -F "filename=subpasta/arquivo.txt"
     """
     try:
-        # Normaliza o caminho informado
+        # Caminho completo (mantém subpastas)
         file_path = os.path.normpath(os.path.join(UPLOAD_DIR, filename))
 
-        # Impede gravação fora do diretório
-        if not file_path.startswith(UPLOAD_DIR):
+        # Normaliza e valida que o caminho está dentro de UPLOAD_DIR
+        if not os.path.commonpath([file_path, UPLOAD_DIR]) == UPLOAD_DIR:
             return JSONResponse(
                 {"status": "error", "message": "Acesso negado."},
                 status_code=403
@@ -244,20 +248,17 @@ async def upload_file(
         with open(file_path, "wb") as f:
             f.write(await file.read())
 
-        # Gera URL HTTP acessível (se montado via StaticFiles)
-        file_url = f"http://localhost:8000/uploads/{filename}"
 
         return JSONResponse({
             "status": "success",
             "original_filename": file.filename,
             "saved_as": filename,
-            "url": file_url
         })
 
     except Exception as e:
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
-
+    
 # ========================
 # 📥 ENDPOINT: /download
 # ========================
