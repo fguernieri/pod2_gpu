@@ -214,9 +214,10 @@ def merge_video(
     else:
         return {"erro": result.stderr}
 
+# ======================== 
+# 📤 ENDPOINT: /upload 
 # ========================
-# 📤 ENDPOINT: /upload
-# ========================
+
 @app.post("/upload")
 async def upload_file(
     file: UploadFile = File(...),
@@ -226,18 +227,31 @@ async def upload_file(
     Salva um arquivo em /workspace/uploads/ com o nome especificado pelo usuário
     """
     try:
-        # Usa o nome informado pelo usuário
-        safe_filename = os.path.basename(filename)
-        filepath = os.path.join(UPLOAD_DIR, safe_filename)
+        # Normaliza o caminho informado
+        file_path = os.path.normpath(os.path.join(UPLOAD_DIR, filename))
 
-        with open(filepath, "wb") as f:
+        # Impede gravação fora do diretório
+        if not file_path.startswith(UPLOAD_DIR):
+            return JSONResponse(
+                {"status": "error", "message": "Acesso negado."},
+                status_code=403
+            )
+
+        # Cria subpastas se necessário
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+        # Salva o arquivo
+        with open(file_path, "wb") as f:
             f.write(await file.read())
+
+        # Gera URL HTTP acessível (se montado via StaticFiles)
+        file_url = f"http://localhost:8000/uploads/{filename}"
 
         return JSONResponse({
             "status": "success",
             "original_filename": file.filename,
-            "saved_as": safe_filename,
-            "path": filepath
+            "saved_as": filename,
+            "url": file_url
         })
 
     except Exception as e:
@@ -255,29 +269,36 @@ async def baixar_arquivo(filename: str):
     GET /download/video_final.mp4
     """
     try:
-        # Garante que o nome seja seguro e dentro do diretório de saída
-        safe_name = os.path.basename(filename)
-        file_path = os.path.join(OUTPUT_DIR, safe_name)
+        # Caminho absoluto (mantendo subpastas, se existirem)
+        file_path = os.path.join(OUTPUT_DIR, filename)
 
+        # Normaliza o caminho para evitar Path Traversal
+        file_path = os.path.normpath(file_path)
+
+        # Garante que está dentro do diretório /workspace/output
+        if not file_path.startswith(OUTPUT_DIR):
+            return JSONResponse(
+                {"error": "Acesso negado."},
+                status_code=403
+            )
+
+        # Verifica se o arquivo existe
         if not os.path.exists(file_path):
             return JSONResponse(
-                {"error": f"Arquivo não encontrado: {safe_name}"},
+                {"error": f"Arquivo não encontrado: {filename}"},
                 status_code=404
             )
 
+        # Retorna o arquivo via HTTP
         return FileResponse(
             path=file_path,
-            filename=safe_name,
+            filename=os.path.basename(filename),
             media_type="application/octet-stream"
         )
 
     except Exception as e:
-        return JSONResponse(
-            {"error": str(e)},
-            status_code=500
-        )
+        return JSONResponse({"error": str(e)}, status_code=500)
         
-
 # ======================
 # ❤️ HEALTHCHECK
 # ======================
