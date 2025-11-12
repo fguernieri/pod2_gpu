@@ -4,6 +4,11 @@ from fastapi.staticfiles import StaticFiles
 import subprocess, json, os, glob, asyncio, time, cv2, numpy as np, soundfile as sf, pysubs2, aiofiles
 from pathlib import Path
 
+# Bibliotecas Whisper
+import whisper
+from whisper.utils import get_writer
+from moviepy.editor import *
+
 app = FastAPI(title="🎬 Video & Karaoke API", version="2.0")
 
 # Monta pasta estática para acessar os arquivos gerados
@@ -86,8 +91,79 @@ def sync_legenda_with_audio(subtitle_input, audio_input, subtitle_output):
         subs.shift(s=offset / 1000)
         print(f"🔧 Offset inicial ajustado em {offset/1000:.2f}s.")
 
-    subs.save(subtitle_output)
+    subs.save(subtitle_output) 
     return subtitle_output
+    
+
+# ========================
+# 🧠 ENDPOINT: /whisper
+# ========================
+@app.post("/whisper")
+async def transcribe_audio(
+    file: UploadFile = File(...),
+    language: str = Form(None),
+    model_name: str = Form("small"),
+    output_format: str = Form("text")
+):
+    """
+    Transcreve áudio com o modelo Whisper.
+    Suporta formatos: text, srt, vtt, json.
+    Garante UTF-8 em qualquer idioma (pt, es, en...).
+    """
+    try:
+        # Caminhos base
+        input_path = os.path.join(UPLOAD_DIR, f"{file.filename}")
+        with open(input_path, "wb") as f:
+            f.write(await file.read())
+
+        # Carrega modelo
+        model = whisper.load_model(model_name)
+
+        # Parâmetros opcionais
+        kwargs = {}
+        if language:
+            kwargs["language"] = language
+
+        # Transcreve
+        result = model.transcribe(input_path, **kwargs)
+
+        # Writer oficial do Whisper
+        writer = get_writer(output_format, UPLOAD_DIR)
+        writer(result, input_path)
+
+        # Caminho de saída
+        output_path = os.path.splitext(input_path)[0] + f".{output_format}"
+
+        # 🔧 Normaliza o arquivo para UTF-8
+        # Corrige casos onde o writer grava em latin-1 (pt/es quebrado)
+        if output_format in ["srt", "vtt", "text"]:
+            try:
+                with open(output_path, "r", encoding="utf-8", errors="ignore") as f:
+                    content_utf8 = f.read()
+                with open(output_path, "w", encoding="utf-8") as f:
+                    f.write(content_utf8)
+                print(f"✅ [{output_format.upper()}] Normalizado para UTF-8 → {os.path.basename(output_path)}")
+            except Exception as e:
+                print(f"⚠️ Falha ao normalizar UTF-8: {e}")
+
+        # Lê o conteúdo final
+        with open(output_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Limpeza opcional (comentada a remoção do áudio)
+        # os.remove(input_path)
+        os.remove(output_path)
+
+        return JSONResponse({
+            "format": output_format,
+            "language": result.get("language", language or "auto"),
+            "content": content
+        })
+
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 
 # ======================================================
 # 🎥 Endpoint 1: Gerar vídeo base
