@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Query, Body
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 import subprocess, json, os, glob, random, cv2, numpy as np, soundfile as sf, pysubs2
 
 app = FastAPI(title="🎬 Video & Karaoke API", version="2.0")
