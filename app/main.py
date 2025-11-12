@@ -3,6 +3,18 @@ import subprocess, json, os, glob, random, cv2, numpy as np, soundfile as sf, py
 
 app = FastAPI(title="🎬 Video & Karaoke API", version="2.0")
 
+# Monta pasta estática para acessar os arquivos gerados
+app.mount("/output", StaticFiles(directory="/workspace/output"), name="output")
+
+# ======================
+# 📂 CONFIGURAÇÕES DE DIRETÓRIO
+# ======================
+UPLOAD_DIR = "/workspace/uploads"
+OUTPUT_DIR = "/workspace/output"
+
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
 # ======================================================
 # 🧩 Funções auxiliares
 # ======================================================
@@ -199,3 +211,77 @@ def merge_video(
         return {"status": "✅ Merge completo", "output": output_file, "duration": duration_audio}
     else:
         return {"erro": result.stderr}
+
+# ========================
+# 📤 ENDPOINT: /upload
+# ========================
+@app.post("/upload")
+async def upload_file(
+    file: UploadFile = File(...),
+    filename: str = Form(...)
+):
+    """
+    Salva um arquivo em /workspace/uploads/ com o nome especificado pelo usuário
+    """
+    try:
+        # Usa o nome informado pelo usuário
+        safe_filename = os.path.basename(filename)
+        filepath = os.path.join(UPLOAD_DIR, safe_filename)
+
+        with open(filepath, "wb") as f:
+            f.write(await file.read())
+
+        return JSONResponse({
+            "status": "success",
+            "original_filename": file.filename,
+            "saved_as": safe_filename,
+            "path": filepath
+        })
+
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+# ========================
+# 📥 ENDPOINT: /download
+# ========================
+@app.get("/download/{filename:path}")
+async def baixar_arquivo(filename: str):
+    """
+    Permite baixar qualquer arquivo do diretório /workspace/output.
+    Exemplo:
+    GET /download/video_final.mp4
+    """
+    try:
+        # Garante que o nome seja seguro e dentro do diretório de saída
+        safe_name = os.path.basename(filename)
+        file_path = os.path.join(OUTPUT_DIR, safe_name)
+
+        if not os.path.exists(file_path):
+            return JSONResponse(
+                {"error": f"Arquivo não encontrado: {safe_name}"},
+                status_code=404
+            )
+
+        return FileResponse(
+            path=file_path,
+            filename=safe_name,
+            media_type="application/octet-stream"
+        )
+
+    except Exception as e:
+        return JSONResponse(
+            {"error": str(e)},
+            status_code=500
+        )
+        
+
+# ======================
+# ❤️ HEALTHCHECK
+# ======================
+@app.get("/")
+def healthcheck():
+    return {
+        "status": "ok",
+        "message": "API ativa 🚀",
+          }
