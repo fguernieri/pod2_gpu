@@ -12,9 +12,9 @@ soundfile==0.12.1
 opencv-python-headless==4.9.0.80
 
 # --- IA e transcrição (CPU safe) ---
-torch==2.5.1+cu124
-torchaudio==2.5.1+cu124
-torchvision==0.20.1+cu124
+torch==2.5.1
+torchaudio==2.5.1
+torchvision==0.20.1
 openai-whisper
 
 # --- Subtítulos ---
