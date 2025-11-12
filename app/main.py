@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Body
 import subprocess, json, os, glob, random, cv2, numpy as np, soundfile as sf, pysubs2
 
 app = FastAPI(title="🎬 Video & Karaoke API", version="2.0")
@@ -9,6 +9,7 @@ app = FastAPI(title="🎬 Video & Karaoke API", version="2.0")
 def get_audio_duration(audio_path):
     data, samplerate = sf.read(audio_path)
     return len(data) / samplerate
+    
 
 def write_frame(video, gpu_frame):
     if gpu_frame is None:
@@ -20,17 +21,26 @@ def write_frame(video, gpu_frame):
         frame_cpu = cv2.cvtColor(frame_cpu, cv2.COLOR_GRAY2BGR)
     video.write(frame_cpu)
 
-def kenburns_zoom_in(gpu_img, frames, w, h, zoom_factor):
+def kenburns_zoom_in(gpu_img, frames, w, h, zoom_factor, start_zoom=1.0):
     for i in range(frames):
-        s = 1.0 + (zoom_factor - 1.0) * (i / (frames - 1))
-        dx, dy = w/2 - (w/2)*s, h/2 - (h/2)*s
+        s = start_zoom + (zoom_factor - start_zoom) * (i / (frames - 1))
+        dx, dy = w / 2 - (w / 2) * s, h / 2 - (h / 2) * s
         M = np.array([[s, 0, dx], [0, s, dy]], np.float32)
         yield cv2.cuda.warpAffine(gpu_img, M, (w, h))
 
-def crossfade_transition(gpu_a, gpu_b, frames):
+def crossfade_transition_smooth(gpu_a, gpu_b, w, h, zoom_factor, frames=30):
+    """
+    Crossfade suave entre duas imagens com leve movimento para evitar 'pulos'.
+    """
+    # gera uma sequência curta de movimento para ambas
+    seq_a = list(kenburns_zoom_in(gpu_a, frames, w, h, zoom_factor * 0.98, zoom_factor))
+    seq_b = list(kenburns_zoom_in(gpu_b, frames, w, h, zoom_factor * 0.98, zoom_factor))
+
     for i in range(frames):
-        alpha = i / frames
-        yield cv2.cuda.addWeighted(gpu_a, 1 - alpha, gpu_b, alpha, 0)
+        alpha = i / (frames - 1)
+        blended = cv2.cuda.addWeighted(seq_a[i], 1 - alpha, seq_b[i], alpha, 0)
+        yield blended
+
 
 def sync_legenda_with_audio(subtitle_input, audio_input, subtitle_output):
     """Sincroniza a legenda .ass com a duração real do áudio"""
@@ -69,11 +79,11 @@ def sync_legenda_with_audio(subtitle_input, audio_input, subtitle_output):
 # ======================================================
 @app.post("/gera-video")
 def gera_video(
-    audio_name: str = Query(...),
-    image_pattern: str = Query("VID*.png"),
-    output_name: str = Query("out.avi"),
-    fps: int = Query(30),
-    zoom_factor: float = Query(1.05),
+    audio_name: str = Body(...),
+    image_pattern: str = Body("VID*.png"),
+    output_name: str = Body("out.avi"),
+    fps: int = Body(30),
+    zoom_factor: float = Body(1.05),
 ):
     uploads = "/workspace/uploads"
     output = "/workspace/output"
@@ -105,11 +115,19 @@ def gera_video(
         gpu_images.append(g)
 
     for i, gpu_img in enumerate(gpu_images):
-        for frame in kenburns_zoom_in(gpu_img, frames_por_img, w, h, zoom_factor):
+        start_zoom = 1.0
+        end_zoom = zoom_factor
+        if i > 0:
+            # começa a próxima imagem com o zoom do final da anterior
+            start_zoom = zoom_factor * 0.98  # ligeiro recuo para suavizar
+        for frame in kenburns_zoom_in(gpu_img, frames_por_img, w, h, zoom_factor, start_zoom):
             write_frame(video, frame)
+    
         if i + 1 < len(gpu_images):
-            for f in crossfade_transition(gpu_img, gpu_images[i+1], transition_frames):
+            for f in crossfade_transition_smooth(gpu_img, gpu_images[i + 1], w, h, zoom_factor, transition_frames):
                 write_frame(video, f)
+
+
 
     video.release()
     return {"status": "✅ Vídeo base gerado", "path": video_path, "duração": round(audio_duration, 2)}
@@ -119,13 +137,13 @@ def gera_video(
 # ======================================================
 @app.post("/merge-video")
 def merge_video(
-    video_name: str = Query(...),
-    audio_name: str = Query(...),
-    subtitle_name: str = Query(...),
-    output_name: str = Query("final_karaoke.mp4"),
-    preset: str = Query("p5"),
-    bitrate: str = Query("8M"),
-    font_dir: str = Query("/usr/share/fonts")
+    video_name: str = Body(...),
+    audio_name: str = Body(...),
+    subtitle_name: str = Body(...),
+    output_name: str = Body("final_karaoke.mp4"),
+    preset: str = Body("p5"),
+    bitrate: str = Body("8M"),
+    font_dir: str = Body("/usr/share/fonts")
 ):
     uploads = "/workspace/uploads"
     output = "/workspace/output"
