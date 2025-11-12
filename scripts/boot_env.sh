@@ -18,6 +18,12 @@ pip install --no-cache-dir --upgrade \
   && echo "✅ OpenCV CUDA instalado com sucesso!" \
   || echo "⚠️ Falha ao instalar OpenCV CUDA (prosseguindo com versão CPU)"
 
+# ==================================
+# 🧠 Reinstala Torch GPU
+# ==================================
+  pip install --no-cache-dir -r /app/requirements-gpu.txt
+  
+
 # 🔍 Verifica CUDA ativo
 python3 - <<'EOF'
 import cv2
