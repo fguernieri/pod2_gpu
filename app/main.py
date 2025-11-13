@@ -93,7 +93,120 @@ def sync_legenda_with_audio(subtitle_input, audio_input, subtitle_output):
 
     subs.save(subtitle_output) 
     return subtitle_output
-    
+
+
+def whisper_worker(job_id, input_path, language, model_name, output_format):
+    status_file = os.path.join(OUTPUT_DIR, f"{job_id}_status.json")
+
+    # Inicia status
+    with open(status_file, "w") as f:
+        f.write(json.dumps({
+            "status": "🔄 iniciando modelo",
+            "arquivo": input_path,
+            "timestamp": time.time()
+        }, ensure_ascii=False))
+
+    try:
+        # Modelo
+        model = whisper.load_model(model_name)
+
+        # Atualiza status
+        with open(status_file, "w") as f:
+            f.write(json.dumps({
+                "status": "🎙️ transcrevendo",
+                "arquivo": input_path,
+                "timestamp": time.time()
+            }, ensure_ascii=False))
+
+        kwargs = {}
+        if language:
+            kwargs["language"] = language
+
+        result = model.transcribe(input_path, **kwargs)
+
+        # Output final
+        output_path = os.path.splitext(input_path)[0] + f".{output_format}"
+
+        writer = get_writer(output_format, OUTPUT_DIR)
+        writer(result, input_path)
+
+        # Lê conteúdo final
+        with open(output_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Finaliza status — aqui o /status já entende normalmente
+        with open(status_file, "w") as f:
+            f.write(json.dumps({
+                "status": "✅ concluído",
+                "arquivo": os.path.basename(output_path),
+                "content": content,
+                "timestamp": time.time()
+            }, ensure_ascii=False))
+
+        os.remove(input_path)
+        os.remove(output_path)
+
+    except Exception as e:
+        with open(status_file, "w") as f:
+            f.write(json.dumps({
+                "status": "❌ erro",
+                "mensagem": str(e),
+                "arquivo": input_path,
+                "timestamp": time.time()
+            }, ensure_ascii=False))
+
+
+# ========================
+# 🧠 ENDPOINT: /whisper async
+# ========================
+@app.post("/whisper_async")
+async def whisper_async(
+    file: UploadFile = File(...),
+    language: str = Form(None),
+    model_name: str = Form("small"),
+    output_format: str = Form("text")
+):
+    try:
+        # job_id no mesmo padrão dos vídeos
+        job_id = str(uuid.uuid4())
+        input_path = os.path.join(UPLOAD_DIR, f"{job_id}_{file.filename}")
+
+        # salva o áudio
+        async with aiofiles.open(input_path, "wb") as f:
+            await f.write(await file.read())
+
+        # status inicial
+        status_file = os.path.join(OUTPUT_DIR, f"{job_id}_status.json")
+        with open(status_file, "w") as f:
+            f.write(json.dumps({
+                "status": "⏳ aguardando início",
+                "arquivo": input_path,
+                "timestamp": time.time()
+            }, ensure_ascii=False))
+
+        # dispara job no background
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(
+            EXECUTOR,
+            whisper_worker,
+            job_id,
+            input_path,
+            language,
+            model_name,
+            output_format,
+        )
+
+        # resposta imediata
+        return {
+            "job_id": job_id,
+            "status": "⏳ iniciado",
+            "check": f"/status/{job_id}"
+        }
+
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 
 # ========================
 # 🧠 ENDPOINT: /whisper
