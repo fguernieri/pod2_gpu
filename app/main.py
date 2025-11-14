@@ -129,17 +129,61 @@ def whisper_worker(input_path, language, model_name, output_format, output_name)
 
         result = model.transcribe(input_path, **kwargs)
 
-        # gera arquivo final
+        # 🔹 chama o writer correto
         writer = get_writer(output_format, OUTPUT_DIR)
         writer(result, base_name)
 
-        # lê conteúdo (se for texto)
+        # 🔹 força cópia com o nome final definido pelo endpoint
+        src = os.path.join(OUTPUT_DIR, f"{base_name}.{output_format}")
+        dst = os.path.join(OUTPUT_DIR, output_name)
+
+        if os.path.exists(src):
+            os.rename(src, dst)
+            print(f"✅ Arquivo final salvo como {dst}")
+        else:
+            print(f"⚠️ Arquivo {src} não encontrado após writer()")
+
+        # após salvar o .srt final
+        if output_format.lower() == "srt":
+            try:
+                id_video = Path(output_name).stem
+                input_srt = os.path.join(OUTPUT_DIR, output_name)
+                fixed_srt = f"/workspace/output/{id_video}_final_fixed.srt"
+                cinematic_ass = f"/workspace/output/{id_video}_cinematic.ass"
+        
+                print("🚀 Iniciando pós-processamento de legendas...")
+        
+                # 1️⃣ srt_split_lines.py
+                subprocess.run(
+                    ["/usr/bin/python3", "/workspace/scripts/srt_split_lines.py",
+                     input_srt, fixed_srt, "5", "singleline"],
+                    check=True
+                )
+                print(f"✅ srt_split_lines.py concluído → {fixed_srt}")
+        
+                # 2️⃣ srt2ass_cinematic.py
+                subprocess.run(
+                    ["/usr/bin/python3", "/workspace/scripts/srt2ass_cinematic.py",
+                     fixed_srt, cinematic_ass, "1280", "720"],
+                    check=True
+                )
+                print(f"✅ srt2ass_cinematic.py concluído → {cinematic_ass}")
+        
+            except subprocess.CalledProcessError as e:
+                print("⚠️ Erro ao rodar pós-processamento:")
+                print(e)
+            except Exception as e:
+                print(f"❌ Erro inesperado no pós-processamento: {e}")
+
+
+        # lê conteúdo se for texto
         try:
             with open(output_path, "r", encoding="utf-8") as f:
                 content = f.read()
         except:
             content = None
 
+        # status final
         with open(status_file, "w", encoding="utf-8") as f:
             f.write(json.dumps({
                 "status": "✅ concluído",
@@ -159,15 +203,15 @@ def whisper_worker(input_path, language, model_name, output_format, output_name)
 
 
 # ========================
-# 🧠 ENDPOINT: /whisper async
+# 🧠 ENDPOINT: /whisper_async
 # ========================
 @app.post("/whisper_async")
 async def whisper_async(
     file: UploadFile = File(...),
     language: str = Form(None),
     model_name: str = Form("small"),
-    output_format: str = Form("text"),
-    output_name: str = Form(...)
+    output_format: str = Form("srt"),  # 👈 formato padrão .srt
+    output_name: str = Form("transcricao.srt")  # 👈 nome padrão final
 ):
     try:
         # input file
@@ -175,7 +219,7 @@ async def whisper_async(
         async with aiofiles.open(input_path, "wb") as f:
             await f.write(await file.read())
 
-        # status json segue padrão já existente
+        # status inicial
         base_name = Path(output_name).stem
         status_file = os.path.join(OUTPUT_DIR, f"{base_name}_status.json")
 
@@ -186,7 +230,7 @@ async def whisper_async(
                 "timestamp": time.time()
             }, ensure_ascii=False))
 
-        # dispara worker
+        # dispara o worker em segundo plano
         loop = asyncio.get_event_loop()
         loop.run_in_executor(
             EXECUTOR,
@@ -200,7 +244,8 @@ async def whisper_async(
 
         return {
             "status": "⏳ iniciado",
-            "check": f"/status/{base_name}"
+            "check": f"/status/{base_name}",
+            "arquivo_final": f"{output_name}"
         }
 
     except Exception as e:
@@ -536,7 +581,7 @@ async def merge_video_async(
 
     video_input = os.path.join(output, video_name)
     audio_input = os.path.join(uploads, audio_name)
-    subtitle_input = os.path.join(uploads, subtitle_name)
+    subtitle_input = os.path.join(output, subtitle_name)
     subtitle_sync = os.path.join(uploads, "legenda_sync.ass")
     output_file = os.path.join(output, output_name)
     base_name = Path(output_name).stem
